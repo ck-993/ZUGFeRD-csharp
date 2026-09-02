@@ -69,6 +69,7 @@ namespace s2industries.ZUGFeRD
             long streamPosition = stream.Position;
 
             this._Descriptor = descriptor;
+            _validateAdvancePayments();
             this._Writer = new ProfileAwareXmlTextWriter(stream, descriptor.Profile, options?.AutomaticallyCleanInvalidCharacters ?? false);
             this._Writer.SetNamespaces(_Namespaces);
 
@@ -560,26 +561,26 @@ namespace s2industries.ZUGFeRD
                 //Detailinformationen zu Positionssummen
                 _WriteComment(_Writer, options, InvoiceCommentConstants.SpecifiedTradeSettlementLineMonetarySummationComment);
                 _Writer.WriteStartElement("ram", "SpecifiedTradeSettlementLineMonetarySummation");
-                decimal total = 0m;
+                decimal lineTotalAmount = 0m;
                 if (tradeLineItem.LineTotalAmount.HasValue)
                 {
-                    total = tradeLineItem.LineTotalAmount.Value;
+                    lineTotalAmount = tradeLineItem.LineTotalAmount.Value;
                 }
                 else
                 {
-                    total = tradeLineItem.NetUnitPrice * tradeLineItem.BilledQuantity;
+                    lineTotalAmount = tradeLineItem.NetUnitPrice * tradeLineItem.BilledQuantity;
                     if (tradeLineItem.NetQuantity.HasValue && (tradeLineItem.NetQuantity.Value != 0))
                     {
-                        total /= tradeLineItem.NetQuantity.Value;
+                        lineTotalAmount /= tradeLineItem.NetQuantity.Value;
                     }
                 }
 
                 _Writer.WriteStartElement("ram", "LineTotalAmount", Profile.Basic | Profile.Comfort | Profile.Extended | Profile.XRechnung1 | Profile.XRechnung);
-                _Writer.WriteValue(_formatDecimal(total));
+                _Writer.WriteValue(_formatDecimal(lineTotalAmount));
                 _Writer.WriteEndElement(); // !ram:LineTotalAmount
 
-                // TODO: TotalAllowanceChargeAmount
-                //Gesamtbetrag der Positionszu- und Abschläge
+                // Gesamtbetrag der Positionszu- und Abschläge; nur Extended, in EN 16931 nicht verwendet.
+                _writeOptionalAmount(_Writer, "ram", "TotalAllowanceChargeAmount", tradeLineItem.TotalAllowanceChargeAmount, 2, false, Profile.Extended);
                 _Writer.WriteEndElement(); // ram:SpecifiedTradeSettlementMonetarySummation
                 #endregion                
 
@@ -1284,7 +1285,50 @@ namespace s2industries.ZUGFeRD
                 }
             }
 
-            // TODO: SpecifiedAdvancePayment (0..unbounded), BG-X-45
+            #region SpecifiedAdvancePayment
+            if (this._Descriptor.Profile == Profile.Extended)
+            {
+                foreach (AdvancePayment advancePayment in this._Descriptor.GetAdvancePayments())
+                {
+                    _Writer.WriteStartElement("ram", "SpecifiedAdvancePayment");
+                    _writeOptionalAmount(_Writer, "ram", "PaidAmount", advancePayment.PaidAmount);
+
+                    if (advancePayment.FormattedReceivedDateTime.HasValue)
+                    {
+                        _Writer.WriteStartElement("ram", "FormattedReceivedDateTime");
+                        _writeElementWithAttributeWithPrefix(_Writer, "qdt", "DateTimeString", "format", "102", _formatDate(advancePayment.FormattedReceivedDateTime.Value));
+                        _Writer.WriteEndElement(); // !ram:FormattedReceivedDateTime
+                    }
+
+                    foreach (Tax includedTradeTax in advancePayment.IncludedTradeTaxes)
+                    {
+                        _Writer.WriteStartElement("ram", "IncludedTradeTax");
+                        _Writer.WriteElementString("ram", "CalculatedAmount", _formatDecimal(includedTradeTax.TaxAmount));
+                        _Writer.WriteElementString("ram", "TypeCode", includedTradeTax.TypeCode.EnumToString());
+                        _Writer.WriteElementString("ram", "CategoryCode", includedTradeTax.CategoryCode.EnumToString());
+                        _Writer.WriteElementString("ram", "RateApplicablePercent", _formatDecimal(includedTradeTax.Percent));
+                        _Writer.WriteEndElement(); // !ram:IncludedTradeTax
+                    }
+
+                    InvoiceReferencedDocument referencedDocument = advancePayment.InvoiceSpecifiedReferencedDocument;
+                    if (referencedDocument != null)
+                    {
+                        _Writer.WriteStartElement("ram", "InvoiceSpecifiedReferencedDocument");
+                        _Writer.WriteElementString("ram", "IssuerAssignedID", referencedDocument.ID);
+                        _Writer.WriteOptionalElementString("ram", "TypeCode", referencedDocument.TypeCode.EnumToString());
+                        if (referencedDocument.IssueDateTime.HasValue)
+                        {
+                            _Writer.WriteStartElement("ram", "FormattedIssueDateTime");
+                            _writeElementWithAttributeWithPrefix(_Writer, "qdt", "DateTimeString", "format", "102", _formatDate(referencedDocument.IssueDateTime.Value));
+                            _Writer.WriteEndElement(); // !ram:FormattedIssueDateTime
+                        }
+                        _Writer.WriteEndElement(); // !ram:InvoiceSpecifiedReferencedDocument
+                    }
+
+                    _Writer.WriteEndElement(); // !ram:SpecifiedAdvancePayment
+                }
+            }
+            #endregion
 
             #endregion
             _Writer.WriteEndElement(); // !ram:ApplicableHeaderTradeSettlement
@@ -1300,6 +1344,39 @@ namespace s2industries.ZUGFeRD
 
             stream.Seek(streamPosition, SeekOrigin.Begin);
         } // !Save()
+
+
+        /// <summary>
+        /// Prüft die für BG-X-45 vorgeschriebenen Daten vor der Serialisierung.
+        /// </summary>
+        private void _validateAdvancePayments()
+        {
+            if (this._Descriptor.Profile != Profile.Extended || this._Descriptor.AdvancePayments == null)
+            {
+                return;
+            }
+
+            foreach (AdvancePayment advancePayment in this._Descriptor.AdvancePayments)
+            {
+                if (advancePayment == null || !advancePayment.PaidAmount.HasValue)
+                {
+                    throw new MissingDataException("Advance payment paid amount is required (BG-X-45).");
+                }
+                if (advancePayment.IncludedTradeTaxes == null || advancePayment.IncludedTradeTaxes.Count == 0)
+                {
+                    throw new MissingDataException("At least one included trade tax is required for an advance payment (BG-X-45).");
+                }
+                if (advancePayment.IncludedTradeTaxes.Any(tax => tax == null || !tax.TypeCode.HasValue || !tax.CategoryCode.HasValue))
+                {
+                    throw new MissingDataException("Advance payment tax type and category are required (BG-X-45).");
+                }
+                if (advancePayment.InvoiceSpecifiedReferencedDocument != null &&
+                    String.IsNullOrWhiteSpace(advancePayment.InvoiceSpecifiedReferencedDocument.ID))
+                {
+                    throw new MissingDataException("Advance payment invoice reference ID is required when a reference is specified (BG-X-45).");
+                }
+            }
+        } // !_validateAdvancePayments()
 
 
         private void _WriteDocumentLevelSpecifiedTradeAllowanceCharge(ProfileAwareXmlTextWriter writer, AbstractTradeAllowanceCharge tradeAllowanceCharge)
