@@ -498,7 +498,8 @@ namespace s2industries.ZUGFeRD
                     _Writer.WriteElementString("ram", "TypeCode", tradeLineItem.TaxType.EnumToString()); // BT-151-0
                 }
 
-                _Writer.WriteOptionalElementString("ram", "ExemptionReason", string.IsNullOrEmpty(tradeLineItem.TaxExemptionReason) ? _TranslateTaxCategoryCode(tradeLineItem.TaxCategoryCode) : tradeLineItem.TaxExemptionReason, Profile.Extended); // BT-X-96
+                //_Writer.WriteOptionalElementString("ram", "ExemptionReason", string.IsNullOrEmpty(tradeLineItem.TaxExemptionReason) ? _TranslateTaxCategoryCode(tradeLineItem.TaxCategoryCode) : tradeLineItem.TaxExemptionReason, Profile.Extended); // BT-X-96
+                _Writer.WriteOptionalElementString("ram", "ExemptionReason", tradeLineItem.TaxExemptionReason, Profile.Extended); // BT-X-96
 
                 if (tradeLineItem.TaxCategoryCode.HasValue)
                 {
