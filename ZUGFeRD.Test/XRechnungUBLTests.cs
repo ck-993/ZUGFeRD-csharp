@@ -1170,7 +1170,7 @@ namespace s2industries.ZUGFeRD.Test
         {
             InvoiceDescriptor descriptor = _InvoiceProvider.CreateInvoice();
             int taxCount = descriptor.Taxes.Count;
-            descriptor.AddApplicableTradeTax(123.00m, 23m, 23m, TaxTypes.VAT, TaxCategoryCodes.S, exemptionReasonCode: TaxExemptionReasonCodes.VATEX_EU_132, exemptionReason: "Tax exemption reason");
+            descriptor.AddApplicableTradeTax(123.00m, 0m, 0m, TaxTypes.VAT, TaxCategoryCodes.E, exemptionReasonCode: TaxExemptionReasonCodes.VATEX_EU_132, exemptionReason: "Tax exemption reason");
 
             MemoryStream ms = new MemoryStream();
             descriptor.Save(ms, ZUGFeRDVersion.Version23, Profile.XRechnung, ZUGFeRDFormats.UBL);
@@ -1224,6 +1224,34 @@ namespace s2industries.ZUGFeRD.Test
             Assert.AreEqual(loadedInvoice.DespatchAdviceReferencedDocument.ID, reference);
             Assert.IsNull(loadedInvoice.DespatchAdviceReferencedDocument.IssueDateTime); // not defined in Peppol standard!
         } // !TestNote()
+
+
+        [TestMethod]
+        public void TestReceivingAdviceReferencedDocumentRoundtrip()
+        {
+            string reference = Guid.NewGuid().ToString();
+            InvoiceDescriptor descriptor = _InvoiceProvider.CreateInvoice();
+            descriptor.SetReceivingAdviceReferencedDocument(reference, DateTime.Today);
+
+            using MemoryStream stream = new MemoryStream();
+            descriptor.Save(stream, ZUGFeRDVersion.Version23, Profile.XRechnung, ZUGFeRDFormats.UBL);
+            stream.Position = 0;
+
+            XmlDocument document = new XmlDocument();
+            document.Load(stream);
+            XmlNamespaceManager namespaceManager = new XmlNamespaceManager(document.NameTable);
+            Assert.IsNotNull(document.DocumentElement);
+            namespaceManager.AddNamespace("cac", document.DocumentElement.GetNamespaceOfPrefix("cac"));
+            namespaceManager.AddNamespace("cbc", document.DocumentElement.GetNamespaceOfPrefix("cbc"));
+            Assert.AreEqual(reference, document.SelectSingleNode("/*/cac:ReceiptDocumentReference/cbc:ID", namespaceManager)?.InnerText);
+            Assert.IsNull(document.SelectSingleNode("/*/cac:ReceiptDocumentReference/cbc:IssueDate", namespaceManager));
+
+            stream.Position = 0;
+            InvoiceDescriptor loadedInvoice = InvoiceDescriptor.Load(stream);
+            Assert.IsNotNull(loadedInvoice.ReceivingAdviceReferencedDocument);
+            Assert.AreEqual(reference, loadedInvoice.ReceivingAdviceReferencedDocument.ID);
+            Assert.IsNull(loadedInvoice.ReceivingAdviceReferencedDocument.IssueDateTime);
+        } // !TestReceivingAdviceReferencedDocumentRoundtrip()
 
 
         [TestMethod]
