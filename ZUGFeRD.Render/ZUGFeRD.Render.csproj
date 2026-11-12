@@ -15,7 +15,7 @@
 
   <ItemGroup>
     <PackageReference Include="Scriban" Version="7.2.2" />
-    <PackageReference Include="ZUGFeRD-csharp" Version="18.0.0" />
+    <ProjectReference Include="..\ZUGFeRD\ZUGFeRD.csproj" />
   </ItemGroup>
 
 </Project>
